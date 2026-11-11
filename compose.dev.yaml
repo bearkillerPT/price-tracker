@@ -1,0 +1,14 @@
+# Postgres for local development only. On the Pi, the NixOS module uses the system Postgres.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: price_tracker
+      POSTGRES_PASSWORD: price_tracker
+      POSTGRES_DB: price_tracker
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+volumes:
+  pgdata: {}

@@ -1,0 +1,17 @@
+{
+  "name": "price-tracker",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @price-tracker/api --filter @price-tracker/web dev",
+    "build": "pnpm --filter @price-tracker/web build && pnpm --filter @price-tracker/api build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "db:up": "docker compose -f compose.dev.yaml up -d",
+    "db:generate": "pnpm --filter @price-tracker/api db:generate",
+    "cli": "pnpm --filter @price-tracker/api cli"
+  }
+}
