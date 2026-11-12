@@ -1,6 +1,6 @@
 # Price Tracker: design
 
-Status: not implemented yet, design agreed on 2026-11-11.
+Status: design agreed on 2026-11-11. Implemented, and running on the Pi since 2026-11-11.
 
 A personal, self-hosted tool. It tracks product prices on a few EU web shops and sends a notification when a price changes. It started as a replacement for `services/pccomponentes` in `raspberryConfs`, a Python script that checks one pccomponentes.pt search every hour and posts to Gotify. That script stays for now: PcComponentes is on hold (see below).
 
@@ -93,6 +93,12 @@ When a check can't find the element any more, the listing shows an error. "Pick 
   - a **condition**: new, as-new, refurbished or used;
   - a **check interval**;
   - a **variant guard**: words that must or must not appear in the page title and in the selected option's label (e.g. Amazon's `M1 Pro-125H 32/1TB`). For example: must contain `32GB` and `1TB`, must not contain `barebone` or `0/0`. A check that fails the guard is stored as `variant_mismatch`, not as a price. Amazon groups versions under one page, and a listing can change underneath its ASIN.
+  - On a shop page that lists every version with its own price (a schema.org `ProductGroup`, as Shopify publishes), the guard also picks the version to track:
+    - a link that names a version (`?variant=…`) wins;
+    - otherwise the one version the terms fit;
+    - without terms, the page's default.
+
+    When the terms fit none or several versions, the check is a `variant_mismatch` that lists the versions and their prices.
 - **Observation**: the result of one check of one listing. It holds:
   - the **headline price**: the price the page shows by default (the buy box on Amazon);
   - the **delivered price**, when signed in;
@@ -148,7 +154,7 @@ Added 2026-11-12. Chromium runs on the server and is shown live in the web UI. I
 - The WebSocket handshake must come from the same origin, since browsers send cookies on cross-site handshakes too, and must carry a valid login.
 - Requests to local and private addresses are aborted in every Chromium context. That covers localhost, RFC 1918 and link-local addresses, `.local`/`.lan` names and single-label names. The same check refuses such shop links, so the server's browser and fetcher can't reach the router, Gotify or Nextcloud. `ALLOW_PRIVATE_HOSTS=true` lifts it, for tests and development only.
 
-**Chromium on NixOS:** Chromium comes from nixpkgs' `playwright-driver.browsers-chromium`, set as `PLAYWRIGHT_BROWSERS_PATH` by the dev shell (and by the NixOS module later). `playwright-core` is pinned to that version, 1.59.1. The bundle copies it to `dist/node_modules`, because it reads its own files at run time and so can't be bundled.
+**Chromium on NixOS:** Chromium comes from nixpkgs' `playwright-driver.browsers-chromium`, set as `PLAYWRIGHT_BROWSERS_PATH` by the dev shell and by the Pi's service. `playwright-core` is pinned to that version, 1.59.1. The bundle copies it to `dist/node_modules`, because it reads its own files at run time and so can't be bundled.
 
 ## Sign-in
 
@@ -193,8 +199,9 @@ Added 2026-11-12; not yet tried with a real business account.
   - A page that comes back signed out is recorded as `signed_out`, never as a business price, and the session expires with a notification.
 - **VAT:**
   - The price area (`#corePriceDisplay…`, `#vatMessage_feature_div`, the `tax_message` JSON) is read for "without VAT" or "with VAT" wording in the marketplaces' languages. The result is `priceIncludesVat`.
-  - A price shown without VAT is kept as shown. `headlineEur` adds the delivery country's standard VAT (`pricing/vat.ts`), so it compares with other listings. The UI shows "€X excl. VAT, ≈ €Y with VAT".
-- **To verify on real pages:** the wording on actual business pages, whether the price fields are the same, and quantity discounts (not read yet).
+  - Business pages label both prices in the buy box and the price table: "€794.12 (945.00 incl. VAT)". The check keeps the one without VAT as the price, and the one with VAT in `raw.priceInclVat`.
+  - Prices are compared as stated: a price without VAT counts as it is, since it's the lowest the page offers (Gil buys on his business account). The UI marks it "excl. VAT" wherever it shows, the best price included.
+- **Checked on a real page** (Amazon Business Spain, 2026-11-12): the add-to-cart form carries the price with VAT, and the seller line includes a VAT-invoice note that's skipped. Quantity discounts aren't read.
 
 ## Prices shown
 
@@ -242,7 +249,7 @@ interface StoreAdapter {
 }
 ```
 
-`fetchPage` is injected: the plain HTTP fetcher, with an anonymous cookie jar per marketplace, in production, and saved pages in tests. Signed-in sessions (step 2) will provide their own fetcher.
+`fetchPage` is injected: the plain HTTP fetcher, with an anonymous cookie jar per marketplace, in production, and saved pages in tests. Signed-in checks get the same HTTP fetcher with the store sign-in's cookie jar and user agent.
 
 **Tables:**
 
@@ -253,13 +260,17 @@ interface StoreAdapter {
 - `store_state`: the pause and back-off per rate group.
 - `notification_channels`, `settings` (single row), `fx_rates`.
 - `custom_stores`: shops added from the UI (domain, label, currency, default interval).
-- `store_sessions` arrives with step 2.
+- `store_sessions`: saved store sign-ins (browser state, encrypted with `SESSION_KEY`).
+- `store_icons`: each store's favicon, shown next to its name.
+  - It comes from the page a check (or a new store's preview) already loaded: the page's icon link first, then `/favicon.ico`.
+  - That's one small request per store, ever.
+  - Only raster images are kept, and private addresses are refused.
 
 ## Deployment
 
-- **Packaging:** the repo provides a Nix flake with the package and a NixOS module. `raspberryConfs` imports it the same way it imports `repos-website`.
+- **Packaging:** `raspberryConfs` builds the app in `services/price-tracker.nix`, the same way it builds PlugHere. It takes this repo as a `flake = false` input. The pnpm dependencies come from `fetchPnpmDeps`, so that file's hash changes whenever `pnpm-lock.yaml` does. This repo's flake only has the dev shell.
 - **Pi specifics:**
-  - Postgres 17 is already running (from `plughere.nix`). The module adds a database and a user that connect locally with no password.
+  - Postgres 17 is already running (from `plughere.nix`). The service adds a database and a user that connect over the local socket with no password.
   - Node 24 comes from nixpkgs.
   - Playwright's downloaded browsers don't run on NixOS. `playwright-core` is pinned to the nixpkgs `playwright-driver` version, 1.59.1 in nixpkgs 26.05, and uses `playwright-driver.browsers`.
   - The web UI is served through nginx with ACME, like the other sites. Notifications post to the local Gotify on port 8082.
@@ -358,7 +369,7 @@ The old script would be retired once the tool covers PcComponentes.
 2. Streamed browser sign-in.
    - ~~Live browser (Chromium streamed to the UI) and picking a shop's price element~~ Done 2026-11-12.
    - ~~Sign-in on top of it (Amazon)~~ Done 2026-11-12.
-3. Amazon signed in, then Amazon Business.
+3. ~~Amazon signed in, then Amazon Business~~ Done 2026-11-12. Checked against a real Amazon Business Spain page; quantity discounts aren't read.
 4. ~~PcComponentes~~ On hold; the old script keeps tracking the Pixel.
    - ~~Custom stores (shops with schema.org product data)~~ Done 2026-11-11.
-5. NixOS module and switching the Pi over. The old `services/pccomponentes` script keeps running alongside.
+5. ~~Deploying to the Pi~~ Done 2026-11-11: price-tracker.bearkillerpt.xyz. The old `services/pccomponentes` script keeps running alongside.
