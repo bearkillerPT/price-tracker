@@ -13,6 +13,7 @@ import { createApp } from './http/app.ts';
 import { log } from './log.ts';
 import { createNotifier, seedChannelFromEnv } from './notify/index.ts';
 import { createHttpFetcher } from './stores/http.ts';
+import { StoreIcons } from './stores/icons.ts';
 import { Previewer } from './stores/preview.ts';
 import { setAllowPrivateHosts } from './stores/private-hosts.ts';
 import { StoreSessions } from './stores/sessions.ts';
@@ -34,7 +35,8 @@ const httpFetcher = createHttpFetcher();
 const fetchPage = createFetcher(httpFetcher, createBrowserFetcher(browsers));
 const storeSessions = new StoreSessions(db, config.SESSION_KEY);
 if (!storeSessions.enabled) log.warn('SESSION_KEY is not set: store sign-ins are off');
-const checks = createCheckRunner({ db, catalog, fetchPage, notify, sessions: storeSessions });
+const storeIcons = new StoreIcons(db);
+const checks = createCheckRunner({ db, catalog, fetchPage, notify, sessions: storeSessions, icons: storeIcons });
 const scheduler = new Scheduler(db, catalog, checks.runCheck);
 const app = createApp({
   db,
@@ -44,6 +46,7 @@ const app = createApp({
   recordOutcome: checks.recordOutcome,
   liveSessions,
   storeSessions,
+  storeIcons,
   webDist: config.webDist,
 });
 

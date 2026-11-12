@@ -9,8 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useLabels, useProductMutation } from "@/hooks/queries";
-import { patch } from "@/lib/api";
-import { conditionLabel } from "@/lib/format";
+import { patch, post } from "@/lib/api";
+import { conditionLabel, relativeTime } from "@/lib/format";
+
+const sameTerms = (a: string[], b: string[]) => a.length === b.length && a.every((t, i) => t === b[i]);
 
 export function EditListingDialog({
   listing,
@@ -44,15 +46,28 @@ function EditListingForm({ listing, onDone }: { listing: Listing; onDone: () => 
   const [exclude, setExclude] = useState(listing.guardExclude);
   const [enabled, setEnabled] = useState(listing.enabled);
 
+  // New version check terms only apply when the page is next read: say so, and offer to read it now
+  const termsChanged = !sameTerms(include, listing.guardInclude) || !sameTerms(exclude, listing.guardExclude);
+  const offerCheck = termsChanged && enabled;
+
   const save = useProductMutation(
     listing.productId,
     (body: ListingUpdate) => patch<ProductDetail>(`/api/listings/${listing.id}`, body),
-    "Listing saved",
+    offerCheck ? "Listing saved. The new version check terms apply from its next check." : "Listing saved",
   );
+  const saveAndCheck = useProductMutation(
+    listing.productId,
+    async (body: ListingUpdate) => {
+      await patch<ProductDetail>(`/api/listings/${listing.id}`, body);
+      return post<ProductDetail>(`/api/listings/${listing.id}/check`);
+    },
+    "Listing saved and its check queued. The result shows up here when the store's turn comes.",
+  );
+  const body = (): ListingUpdate => ({ condition, intervalMinutes, guardInclude: include, guardExclude: exclude, enabled });
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    save.mutate({ condition, intervalMinutes, guardInclude: include, guardExclude: exclude, enabled }, { onSuccess: onDone });
+    save.mutate(body(), { onSuccess: onDone });
   };
 
   // When paused, the listing adds nothing to the request rate; going from paused to enabled adds the full rate
@@ -87,10 +102,21 @@ function EditListingForm({ listing, onDone }: { listing: Listing; onDone: () => 
         )}
       </div>
       <GuardFields idPrefix="edit" include={include} exclude={exclude} onIncludeChange={setInclude} onExcludeChange={setExclude} />
+      {offerCheck && (
+        <p role="status" className="text-sm text-muted-foreground">
+          The listing's latest result was read with the old terms. The new ones apply from its next check
+          {listing.nextCheckAt ? ` (${relativeTime(listing.nextCheckAt)})` : ""}, or check now: one request to the store.
+        </p>
+      )}
       <DialogFooter>
-        <Button type="submit" disabled={save.isPending}>
+        <Button type="submit" variant={offerCheck ? "outline" : "default"} disabled={save.isPending || saveAndCheck.isPending}>
           Save
         </Button>
+        {offerCheck && (
+          <Button type="button" disabled={save.isPending || saveAndCheck.isPending} onClick={() => saveAndCheck.mutate(body(), { onSuccess: onDone })}>
+            Save and check now
+          </Button>
+        )}
       </DialogFooter>
     </form>
   );

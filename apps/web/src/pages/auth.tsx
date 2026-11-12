@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ResetPasswordHint } from "@/components/reset-password-hint";
 import { keys, useAuthState } from "@/hooks/queries";
 import { errorMessage, post } from "@/lib/api";
 
@@ -108,8 +109,7 @@ export function AuthPage({ mode }: { mode: "setup" | "login" }) {
             </Button>
             {mode === "login" && (
               <p className="text-xs text-muted-foreground">
-                Forgot it? On the server, run <code className="font-mono">price-tracker reset-password</code>. Products and
-                history are kept.
+                <ResetPasswordHint />
               </p>
             )}
           </form>

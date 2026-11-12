@@ -3,24 +3,23 @@ import type { ProductHistory } from "@price-tracker/shared";
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 
 import { Button } from "@/components/ui/button";
-import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useHistory } from "@/hooks/queries";
-import { conditionLabel, formatDateTime, formatEur, formatShortDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { useHistory, useLabels } from "@/hooks/queries";
+import { conditionLabel, formatDateTime, formatEur, formatShortDate, formatTime } from "@/lib/format";
 
 const RANGES = [7, 30, 90] as const;
 const PALETTE = 5;
 
 type Row = { t: number } & Record<string, number | null>;
 
-function toChart(history: ProductHistory) {
+function toChart(history: ProductHistory, marketplaceLabel: (id: string) => string) {
   const config: ChartConfig = {};
   const rows = new Map<number, Row>();
   history.listings.forEach((l, i) => {
     const key = `l${l.listingId}`;
     config[key] = {
-      label: `${l.marketplace} · ${conditionLabel(l.condition)}`,
+      label: `${marketplaceLabel(l.marketplace)} · ${conditionLabel(l.condition)}`,
       color: `var(--chart-${(i % PALETTE) + 1})`,
     };
     for (const p of l.points) {
@@ -38,7 +37,11 @@ function toChart(history: ProductHistory) {
 export function PriceHistoryChart({ productId }: { productId: number }) {
   const [days, setDays] = useState<(typeof RANGES)[number]>(30);
   const history = useHistory(productId, days);
-  const chart = useMemo(() => (history.data ? toChart(history.data) : null), [history.data]);
+  const { marketplaceLabel } = useLabels();
+  const chart = useMemo(() => (history.data ? toChart(history.data, marketplaceLabel) : null), [history.data, marketplaceLabel]);
+  // Points within about a day: label the axis with times, not the (same) date
+  const span = chart && chart.rows.length > 1 ? chart.rows[chart.rows.length - 1]!.t - chart.rows[0]!.t : 0;
+  const tick = span < 36 * 60 * 60 * 1000 ? formatTime : formatShortDate;
 
   return (
     <section aria-labelledby="history-heading" className="space-y-3">
@@ -77,7 +80,7 @@ export function PriceHistoryChart({ productId }: { productId: number }) {
               type="number"
               scale="time"
               domain={["dataMin", "dataMax"]}
-              tickFormatter={(t: number) => formatShortDate(t)}
+              tickFormatter={(t: number) => tick(t)}
               tickLine={false}
               axisLine={false}
               minTickGap={24}
@@ -119,9 +122,19 @@ export function PriceHistoryChart({ productId }: { productId: number }) {
                 isAnimationActive={false}
               />
             ))}
-            <ChartLegend content={<ChartLegendContent className={cn("flex-wrap")} />} />
           </LineChart>
         </ChartContainer>
+      )}
+      {/* Below the chart rather than inside it, so a long list wraps without covering the lines */}
+      {chart && chart.rows.length > 0 && (
+        <ul aria-label="Lines" className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs">
+          {chart.keys.map((key, i) => (
+            <li key={key} className="inline-flex items-center gap-1.5">
+              <span aria-hidden className="w-3.5" style={{ borderTop: `2px ${i >= PALETTE ? "dashed" : "solid"} var(--chart-${(i % PALETTE) + 1})` }} />
+              {chart.config[key]?.label}
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );

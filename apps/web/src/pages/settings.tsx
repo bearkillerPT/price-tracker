@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { ResetPasswordHint } from "@/components/reset-password-hint";
 import { keys, useChannels, useSettings } from "@/hooks/queries";
 import { del, errorMessage, patch, post } from "@/lib/api";
 
@@ -305,8 +306,7 @@ function PasswordCard() {
       <CardHeader>
         <CardTitle>Password</CardTitle>
         <CardDescription>
-          Forgot it? On the server, run <code className="font-mono">price-tracker reset-password</code>. Products, listings and
-          history are kept.
+          <ResetPasswordHint />
         </CardDescription>
       </CardHeader>
       <CardContent>

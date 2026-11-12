@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CONDITIONS,
   CUSTOM_STORE_DEFAULTS,
+  guardFailures,
   marketplacesOfStore,
   storeFamily,
   storeIn,
@@ -30,6 +31,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { keys, useLabels, useProductMutation } from "@/hooks/queries";
 import { ApiRequestError, errorMessage, post } from "@/lib/api";
 import { conditionLabel, formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export function AddListingDialog({ product }: { product: ProductDetail }) {
   const [open, setOpen] = useState(false);
@@ -308,7 +310,7 @@ function AddListingForm({ product, from, onDone }: { product: ProductDetail; fro
         </div>
       )}
 
-      {preview && !pick && <PreviewResult preview={preview} onPick={() => setPickOpen(true)} picking={testPick.isPending} />}
+      {preview && !pick && <PreviewResult preview={preview} onPick={() => setPickOpen(true)} picking={testPick.isPending} include={include} exclude={exclude} />}
       {preview && pick && <PickResult test={pick} onPickAgain={() => setPickOpen(true)} />}
       {preview && (
         <PickPriceDialog
@@ -353,8 +355,8 @@ function AddListingForm({ product, from, onDone }: { product: ProductDetail; fro
                 {groups.length > 1 && <div className="pt-1 text-sm font-medium">{g.info.label}</div>}
                 {g.info.requiresSignIn && (
                   <p className="text-xs text-muted-foreground">
-                    Your {g.info.label} account's prices: checked only while you're signed in to that store (Stores page). Usually
-                    without VAT; compared with other listings with VAT added.
+                    Your {g.info.label} account's prices: checked only while you're signed in to that store (Stores page). The
+                    price without VAT counts, as the lowest the page states.
                   </p>
                 )}
                 <div className="flex items-center gap-2">
@@ -441,7 +443,19 @@ function AddListingForm({ product, from, onDone }: { product: ProductDetail; fro
   );
 }
 
-function PreviewResult({ preview: p, onPick, picking }: { preview: StorePreview; onPick: () => void; picking: boolean }) {
+function PreviewResult({
+  preview: p,
+  onPick,
+  picking,
+  include,
+  exclude,
+}: {
+  preview: StorePreview;
+  onPick: () => void;
+  picking: boolean;
+  include: string[];
+  exclude: string[];
+}) {
   if (!p.trackable && p.pickable) {
     return (
       <div className="space-y-3 rounded-md border p-4 text-sm">
@@ -498,13 +512,48 @@ function PreviewResult({ preview: p, onPick, picking }: { preview: StorePreview;
         {p.price !== null ? formatMoney(p.price, p.currency ?? "EUR") : "No price"} · {p.availabilityText ?? (p.inStock ? "In stock" : "Stock unknown")}
         {p.seller && ` · sold by ${p.seller}`}
         {p.gtin && ` · EAN ${p.gtin}`}
+        {p.variantLabel && p.variants.length > 1 && ` · ${p.variantLabel}`}
       </p>
+      {p.variants.length > 1 && <PreviewVersions preview={p} include={include} exclude={exclude} />}
       <p className="text-xs text-muted-foreground">
         Read from the page's {p.dataSource === "json-ld" ? "JSON-LD" : p.dataSource} product data. Check it's the product you want.
       </p>
       <Button type="button" variant="link" className="h-auto p-0 text-xs" disabled={picking} onClick={onPick}>
         Price not the one on the page? Pick the price on the page instead
       </Button>
+    </div>
+  );
+}
+
+/** A page that sells several versions: which one the listing will track, by its link or the version check terms. */
+function PreviewVersions({ preview: p, include, exclude }: { preview: StorePreview; include: string[]; exclude: string[] }) {
+  const linked = p.url.includes("?") && p.variants.some((v) => v.url && v.url.includes(p.url.slice(p.url.indexOf("?"))));
+  const terms = include.length > 0 || exclude.length > 0;
+  const fits = terms ? p.variants.filter((v) => guardFailures(`${p.title ?? ""} | ${v.label}`, include, exclude).length === 0) : [];
+  const tracked = linked ? p.variantLabel : terms ? (fits.length === 1 ? fits[0]!.label : null) : p.variantLabel;
+  return (
+    <div className="space-y-1 pt-1">
+      <p>This page sells {p.variants.length} versions:</p>
+      <ul className="space-y-0.5 pl-1">
+        {p.variants.map((v) => (
+          <li key={v.url ?? v.label} className={cn("text-muted-foreground", v.label === tracked && "font-medium text-foreground")}>
+            {v.label === tracked ? "→ " : "· "}
+            {v.label}: {formatMoney(v.price, v.currency ?? p.currency ?? "EUR")}
+            {v.inStock === false && " (out of stock)"}
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted-foreground">
+        {linked
+          ? "The link picks the version marked →."
+          : !terms
+            ? "Without version check terms, the listing tracks the page's default (→). To track another, add a term under Version check that only it has, e.g. 1TB."
+            : fits.length === 1
+              ? "Your version check terms pick the version marked →."
+              : fits.length === 0
+                ? "Your version check terms fit none of these versions: checks would find no price. Change the terms."
+                : `Your version check terms fit ${fits.length} of these versions. Add a term only one of them has.`}
+      </p>
     </div>
   );
 }

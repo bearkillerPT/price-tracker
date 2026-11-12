@@ -45,6 +45,9 @@ export const formatDateTime = (iso: string | null | undefined) => (iso ? dateTim
 const shortDate = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 export const formatShortDate = (ms: number) => shortDate.format(new Date(ms));
 
+const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+export const formatTime = (ms: number) => time.format(new Date(ms));
+
 /** 30 -> "30 min", 180 -> "3 h", 1440 -> "1 day". */
 export function formatInterval(minutes: number): string {
   if (minutes % (24 * 60) === 0) {

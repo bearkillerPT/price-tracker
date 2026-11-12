@@ -1,6 +1,7 @@
 // One check of one listing: fetch the page, then record what it found: apply the variant guard, store the
 // observation, pause the store after a captcha or block, and fire the product's alert rules.
 import { and, desc, eq, gt } from 'drizzle-orm';
+import { guardFailures } from '@price-tracker/shared';
 import type { AlertType } from '@price-tracker/shared';
 import { evaluateAlerts } from '../alerts/evaluate.ts';
 import type { CatalogService } from '../catalog.ts';
@@ -11,14 +12,13 @@ import { describeBest, formatEur } from '../notify/format.ts';
 import type { Notify } from '../notify/index.ts';
 import { loadFxRates, toEur } from '../pricing/fx.ts';
 import { round2 } from '../pricing/money.ts';
-import { standardVatRate, withStandardVat } from '../pricing/vat.ts';
 import { adapterFor } from '../stores/registry.ts';
 import { emptyOutcome } from '../stores/types.ts';
+import type { StoreIcons } from '../stores/icons.ts';
 import type { StoreSessions } from '../stores/sessions.ts';
-import type { CheckOutcome, PageFetcher } from '../stores/types.ts';
+import type { CheckOutcome, PageFetcher, PageResponse } from '../stores/types.ts';
 import { DEFINITIVE_STATUSES, productPriceState } from '../views/products.ts';
 import type { PriceState } from '../views/products.ts';
-import { guardFailures } from './guard.ts';
 
 export interface CheckDeps {
   db: Db;
@@ -27,6 +27,8 @@ export interface CheckDeps {
   notify: Notify;
   /** Signed-in store accounts: checks of their marketplaces use them. */
   sessions: StoreSessions;
+  /** Learns each store's icon from the first page a check loads. */
+  icons?: StoreIcons;
   now?: () => Date;
 }
 
@@ -47,7 +49,7 @@ export const nextCheckAfter = (from: Date, intervalMinutes: number, random = Mat
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-export function createCheckRunner({ db, catalog, fetchPage, notify, sessions, now = () => new Date() }: CheckDeps): CheckRunner {
+export function createCheckRunner({ db, catalog, fetchPage, notify, sessions, icons, now = () => new Date() }: CheckDeps): CheckRunner {
   const load = async (listingId: number) => {
     const [row] = await db.select({ listing: listings, product: products }).from(listings).innerJoin(products, eq(listings.productId, products.id)).where(eq(listings.id, listingId));
     return row ?? null;
@@ -63,9 +65,12 @@ export function createCheckRunner({ db, catalog, fetchPage, notify, sessions, no
     // Signed in to this marketplace? The check sends that account's cookies
     const info = catalog.store(listing.store);
     const session = info?.canSignIn ? await sessions.active(listing.store, listing.marketplace) : null;
-    const fetchFor: PageFetcher = session
-      ? (url, options) => fetchPage(url, { ...options, session: { jar: session.jar, userAgent: session.userAgent } })
-      : fetchPage;
+    // The page the check loaded, to learn the store's icon from
+    let page: PageResponse | null = null;
+    const fetchFor: PageFetcher = async (url, options) => {
+      page = await fetchPage(url, session ? { ...options, session: { jar: session.jar, userAgent: session.userAgent } } : options);
+      return page;
+    };
 
     let outcome: CheckOutcome;
     if (!marketplace || !adapter) {
@@ -75,7 +80,10 @@ export function createCheckRunner({ db, catalog, fetchPage, notify, sessions, no
       outcome = emptyOutcome('signed_out', `Sign in to ${marketplace.label} on the Stores page: its prices need your account`);
     } else {
       try {
-        outcome = await adapter.check({ marketplace, externalId: listing.externalId, url: listing.url }, fetchFor);
+        outcome = await adapter.check(
+          { marketplace, externalId: listing.externalId, url: listing.url, guardInclude: listing.guardInclude, guardExclude: listing.guardExclude },
+          fetchFor,
+        );
       } catch (err) {
         outcome = { ...emptyOutcome('error', errorMessage(err)), requestCount: 1 };
       }
@@ -87,6 +95,7 @@ export function createCheckRunner({ db, catalog, fetchPage, notify, sessions, no
       outcome = { ...outcome, status: 'signed_out', error: `${marketplace?.label ?? listing.marketplace} no longer accepts your sign-in; sign in again on the Stores page` };
     }
     await record(row, outcome, now(), !!session && pageSignedIn === true);
+    if (page) void icons?.learn(listing.store, page);
     if (!session) return;
     if (pageSignedIn === false) {
       // The store no longer accepts the sign-in: carry on without it, and say so once
@@ -123,14 +132,8 @@ export function createCheckRunner({ db, catalog, fetchPage, notify, sessions, no
     const rates = await loadFxRates(db);
     const deliveredPrice = outcome.price !== null && outcome.shipping !== null ? round2(outcome.price + outcome.shipping) : null;
     const headlinePrice = deliveredPrice ?? outcome.price;
-    // Shown without VAT (Amazon Business): compare it with VAT added, at the delivery country's standard rate
-    let comparable = headlinePrice;
-    if (outcome.priceIncludesVat === false && headlinePrice !== null) {
-      const country = (outcome.raw.deliveryCountry as string | null | undefined) ?? catalog.marketplace(listing.marketplace)?.country;
-      comparable = withStandardVat(headlinePrice, country);
-      outcome = { ...outcome, raw: { ...outcome.raw, vatAddedForComparison: standardVatRate(country), vatCountry: country ?? null } };
-    }
-    const headlineEur = toEur(comparable, outcome.currency, rates);
+    // Compared as stated: a price without VAT (Amazon Business) counts as it is, the lowest the page offers
+    const headlineEur = toEur(headlinePrice, outcome.currency, rates);
 
     const before = await productPriceState(db, product);
     await db.insert(observations).values({

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SignInDialog } from "@/components/sign-in-dialog";
+import { MarketplaceName } from "@/components/store-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -105,7 +106,7 @@ export function StoreAccounts() {
               {sessions.data.map((s) => (
                 <TableRow key={`${s.store}/${s.marketplace}`}>
                   <TableCell>
-                    <div className="font-medium">{marketplaceLabel(s.marketplace)}</div>
+                    <MarketplaceName marketplace={s.marketplace} className="font-medium" />
                     {s.store !== "amazon" && <div className="text-xs text-muted-foreground">{storeLabel(s.store)}</div>}
                   </TableCell>
                   <TableCell className="whitespace-normal">

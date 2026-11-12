@@ -45,6 +45,7 @@ export function toObservation(r: ObservationRow): Observation {
     currency: r.currency as Currency | null,
     price: r.price,
     priceIncludesVat: r.priceIncludesVat,
+    priceInclVat: typeof r.raw?.priceInclVat === 'number' ? r.raw.priceInclVat : null,
     shipping: r.shipping,
     deliveredPrice: r.deliveredPrice,
     headlinePrice: r.headlinePrice,
@@ -114,6 +115,7 @@ export function computePriceState(
         headlinePrice: o.headlinePrice,
         currency: o.currency as Currency,
         headlineEur: o.headlineEur,
+        priceIncludesVat: o.priceIncludesVat,
         checkedAt: o.checkedAt.toISOString(),
       };
     }
@@ -191,7 +193,7 @@ export async function loadProductDetail(db: Db, id: number): Promise<ProductDeta
   return (await loadProductDetails(db, [id]))[0] ?? null;
 }
 
-export function toSummary({ notes: _notes, listings: _listings, alertRules: _rules, ...summary }: ProductDetail): ProductSummary {
+export function toSummary({ listings: _listings, alertRules: _rules, ...summary }: ProductDetail): ProductSummary {
   return summary;
 }
 

@@ -78,6 +78,7 @@ async function check(target: ListingTarget, fetchPage: PageFetcher): Promise<Che
       deliveryZip: page.deliveryZip,
       deliverToText: page.deliverToText,
       signedIn: page.signedIn,
+      priceInclVat: page.priceInclVat,
     },
   };
 }

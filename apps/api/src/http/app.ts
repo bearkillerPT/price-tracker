@@ -18,6 +18,7 @@ import type { HomeUrl } from '../routes/store-sessions.ts';
 import { storeRoutes } from '../routes/stores.ts';
 import type { Previewer } from '../stores/preview.ts';
 import type { StoreSessions } from '../stores/sessions.ts';
+import type { StoreIcons } from '../stores/icons.ts';
 import { errorHandler, HttpError } from './errors.ts';
 
 export interface AppDeps {
@@ -31,13 +32,15 @@ export interface AppDeps {
   liveSessions: LiveSessions;
   /** Store sign-ins kept from the live browser. */
   storeSessions: StoreSessions;
+  /** Store favicons. */
+  storeIcons: StoreIcons;
   /** Where a marketplace's home page is (tests serve fake ones). */
   storeHomeUrl?: HomeUrl;
   /** Built web app to serve, or null to serve only the API. */
   webDist: string | null;
 }
 
-export function createApp({ db, catalog, wake, previewer, recordOutcome, liveSessions, storeSessions, storeHomeUrl, webDist }: AppDeps): express.Express {
+export function createApp({ db, catalog, wake, previewer, recordOutcome, liveSessions, storeSessions, storeIcons, storeHomeUrl, webDist }: AppDeps): express.Express {
   const app = express();
   app.disable('x-powered-by');
   // nginx runs on the same host: trust it for the client IP and for HTTPS (secure cookies)
@@ -69,9 +72,9 @@ export function createApp({ db, catalog, wake, previewer, recordOutcome, liveSes
     if (await currentSession(db, req, res)) next();
     else next(new HttpError(401, 'Not signed in'));
   });
-  api.use(productRoutes({ db, catalog, wake, previewer, recordOutcome }));
-  api.use(storeRoutes(db, catalog, wake));
-  api.use(customStoreRoutes(db, catalog, previewer, wake));
+  api.use(productRoutes({ db, catalog, wake, previewer, recordOutcome, icons: storeIcons }));
+  api.use(storeRoutes(db, catalog, wake, storeIcons));
+  api.use(customStoreRoutes(db, catalog, previewer, wake, storeIcons));
   api.use(browserRoutes(liveSessions));
   api.use(storeSessionRoutes(catalog, storeSessions, liveSessions, storeHomeUrl));
   api.use(notificationRoutes(db));

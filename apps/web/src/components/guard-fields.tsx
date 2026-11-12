@@ -21,7 +21,8 @@ export function GuardFields({
       <p id={`${idPrefix}-guard-help`} className="text-xs text-muted-foreground">
         Stores often group versions on one page (Amazon puts the barebone next to the 32GB/1TB one). A check only records
         the price when the page title or the selected option contains every "must contain" term and none of the "must not
-        contain" ones. Case, spaces and punctuation are ignored. Example: must contain <code className="font-mono">32GB</code> and{" "}
+        contain" ones. On shop pages that list every version with its price, the terms also pick the version to track. Case,
+        spaces and punctuation are ignored. Example: must contain <code className="font-mono">32GB</code> and{" "}
         <code className="font-mono">1TB</code>, must not contain <code className="font-mono">barebone</code>.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">

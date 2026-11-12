@@ -7,8 +7,9 @@ import { customStores, listings, storeState } from '../db/schema.ts';
 import { HttpError, validate } from '../http/errors.ts';
 import type { Previewer } from '../stores/preview.ts';
 import { parseProductUrl, toUrl } from '../stores/registry.ts';
+import type { StoreIcons } from '../stores/icons.ts';
 
-export function customStoreRoutes(db: Db, catalog: CatalogService, previewer: Previewer, wake: (group: string) => void): Router {
+export function customStoreRoutes(db: Db, catalog: CatalogService, previewer: Previewer, wake: (group: string) => void, icons: StoreIcons): Router {
   const r = Router();
 
   r.get('/catalog', (_req, res) => {
@@ -73,6 +74,7 @@ export function customStoreRoutes(db: Db, catalog: CatalogService, previewer: Pr
     if (n > 0) throw new HttpError(409, n === 1 ? '1 listing still uses this store; delete it first' : `${n} listings still use this store; delete them first`);
     await db.delete(customStores).where(eq(customStores.id, id));
     await db.delete(storeState).where(eq(storeState.rateGroup, id));
+    await icons.forget(id);
     res.json(await catalog.refresh());
   });
 

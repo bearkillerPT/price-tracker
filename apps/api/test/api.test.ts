@@ -18,11 +18,12 @@ import { createDb } from '../src/db/client.ts';
 import { migrateAndSeed } from '../src/db/migrate.ts';
 import { createApp } from '../src/http/app.ts';
 import { createNotifier } from '../src/notify/index.ts';
+import { StoreIcons } from '../src/stores/icons.ts';
 import { Previewer } from '../src/stores/preview.ts';
 import { StoreSessions } from '../src/stores/sessions.ts';
 import { setAllowPrivateHosts } from '../src/stores/private-hosts.ts';
 import type { PageFetcher } from '../src/stores/types.ts';
-import { amazonFixture, businessAmazonPage, shopFixture, signedInAmazonPage } from './fixtures.ts';
+import { amazonFixture, shopFixture, signedInAmazonPage } from './fixtures.ts';
 
 const ADMIN_URL = process.env.TEST_DATABASE_ADMIN_URL ?? 'postgres://price_tracker:price_tracker@127.0.0.1:55432/postgres';
 const TEST_DB = 'price_tracker_test';
@@ -63,7 +64,14 @@ describe.skipIf(!available)('API end to end', () => {
   };
   const catalog = new CatalogService(db);
   const storeSessions = new StoreSessions(db, randomBytes(32).toString('base64'));
-  const checks = createCheckRunner({ db, catalog, fetchPage, notify: createNotifier(db), sessions: storeSessions });
+  // Store icons come from a fake loader: a 1x1 PNG for whatever the page points at
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const iconRequests: string[] = [];
+  const storeIcons = new StoreIcons(db, async (url) => {
+    iconRequests.push(url);
+    return { contentType: 'image/png', data: PNG };
+  });
+  const checks = createCheckRunner({ db, catalog, fetchPage, notify: createNotifier(db), sessions: storeSessions, icons: storeIcons });
   const runCheck = checks.runCheck;
   const previewer = new Previewer(fetchPage);
   const browsers = new BrowserManager(500);
@@ -104,7 +112,7 @@ describe.skipIf(!available)('API end to end', () => {
       });
     });
     const gotifyUrl = await listen(gotifyServer);
-    appServer = http.createServer(createApp({ db, catalog, wake: () => {}, previewer, recordOutcome: checks.recordOutcome, liveSessions, storeSessions, storeHomeUrl: (m) => `${homeBase}/home/${m.id}`, webDist: null }));
+    appServer = http.createServer(createApp({ db, catalog, wake: () => {}, previewer, recordOutcome: checks.recordOutcome, liveSessions, storeSessions, storeIcons, storeHomeUrl: (m) => `${homeBase}/home/${m.id}`, webDist: null }));
     attachLiveSocket(appServer, db, liveSessions);
     base = await listen(appServer);
     (globalThis as any).__gotifyUrl = gotifyUrl;
@@ -321,6 +329,13 @@ describe.skipIf(!available)('API end to end', () => {
     await runCheck(listing.id);
     expect(fetches).toBe(before + 2);
 
+    // The new store's icon, from the page its preview loaded (the fake loader stands in for the icon request)
+    await expect.poll(async () => (await api<Record<string, string>>('GET', '/api/store-icons')).body['radiopopular.pt']).toBeDefined();
+    const icon = await fetch(`${base}/api/store-icons/radiopopular.pt`, { headers: { cookie } });
+    expect(icon.headers.get('content-type')).toBe('image/png');
+    expect(Buffer.from(await icon.arrayBuffer())).toEqual(PNG);
+    expect(iconRequests.filter((u) => u.includes('radiopopular'))).toHaveLength(1);
+
     const group = (await api<RateGroupStatus[]>('GET', '/api/stores')).body.find((g) => g.group === 'radiopopular.pt');
     expect(group).toMatchObject({ label: 'Radio Popular', custom: true, enabledListings: 1, warnPerHour: 10, actualLastHour: { total: 2 } });
 
@@ -330,6 +345,7 @@ describe.skipIf(!available)('API end to end', () => {
     await api('DELETE', `/api/listings/${listing.id}`);
     const deleted = await api<Catalog>('DELETE', '/api/custom-stores/radiopopular.pt');
     expect(deleted.body.stores.some((s) => s.id === 'radiopopular.pt')).toBe(false);
+    expect((await api<Record<string, string>>('GET', '/api/store-icons')).body['radiopopular.pt']).toBeUndefined();
   });
 
   it("previews say which shops block automated checks, and which have nothing to read", async () => {
@@ -516,7 +532,7 @@ describe.skipIf(!available)('API end to end', () => {
     }
   });
 
-  it('checks Amazon Business only with a business sign-in, and compares its prices with VAT added', async () => {
+  it('checks Amazon Business only with a business sign-in, and counts its price without VAT as it is', async () => {
     const sessions = (await api<StoreSessionStatus[]>('GET', '/api/store-sessions')).body;
     expect(sessions.filter((s) => s.store === 'amazon-business').map((s) => s.marketplace)).toEqual([
       'business.amazon.de',
@@ -546,22 +562,25 @@ describe.skipIf(!available)('API end to end', () => {
     expect(p.listings.find((l) => l.id === listing.id)!.latest).toMatchObject({ status: 'signed_out', price: null });
     expect(p.best).toEqual(bestBefore);
 
-    // Signed in with the business account: priced without VAT, compared with Portugal's 23% added
+    // Signed in with the business account: the page states both prices; the one without VAT counts as it is
     await storeSessions.save('amazon-business', 'business.amazon.de', { cookies: [], origins: [] }, 'Mozilla/5.0 HeadlessChrome/147', 'Gil Lda');
-    signedInPages.set(listing.url, { status: 200, body: businessAmazonPage(amazonFixture('de-in-stock-delivery-fee'), 'Gil Lda', 'Lisboa 1000-001') });
+    signedInPages.set(listing.url, { status: 200, body: amazonFixture('business-es-vat-both') });
     await runCheck(listing.id);
     p = (await api<ProductDetail>('GET', `/api/products/${productId}`)).body;
     expect(p.listings.find((l) => l.id === listing.id)!.latest).toMatchObject({
       status: 'ok',
       signedIn: true,
       priceIncludesVat: false,
-      price: 949,
-      shipping: 9.22,
-      headlinePrice: 958.22,
-      headlineEur: 1178.61,
+      price: 794.12,
+      priceInclVat: 945,
+      shipping: 0,
+      headlinePrice: 794.12,
+      headlineEur: 794.12,
       deliveryLocationSource: 'account',
     });
-    expect(p.best).toEqual(bestBefore); // €1,178.61 with VAT doesn't beat the cheapest listing
+    // The lowest price the product has, so it's the best one, marked as without VAT
+    expect(bestBefore!.headlineEur).toBeGreaterThan(794.12);
+    expect(p.best).toMatchObject({ listingId: listing.id, headlinePrice: 794.12, priceIncludesVat: false });
 
     // The sign-in lapses: what comes back is Amazon's ordinary page, not a business price
     signedInPages.set(listing.url, { status: 200, body: amazonFixture('de-in-stock-delivery-fee') });

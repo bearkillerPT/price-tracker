@@ -225,3 +225,15 @@ export const storeSessions = pgTable(
   },
   (t) => [uniqueIndex('store_sessions_store_marketplace').on(t.store, t.marketplace)],
 );
+
+/** Each store's favicon, learned once from a page a check loaded; shown next to the store's name. */
+export const storeIcons = pgTable('store_icons', {
+  store: text('store').primaryKey(),
+  /** false: no usable icon was found (tried again a week later). */
+  ok: boolean('ok').notNull(),
+  contentType: text('content_type'),
+  /** The image, base64. */
+  data: text('data'),
+  sourceUrl: text('source_url'),
+  fetchedAt: timestamptz('fetched_at').notNull().defaultNow(),
+});

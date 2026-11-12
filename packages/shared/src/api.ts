@@ -270,7 +270,19 @@ export interface StorePreview {
   seller: string | null;
   /** EAN/GTIN when the page publishes one. */
   gtin: string | null;
+  /** The version the price is for, on a page that sells several. */
+  variantLabel: string | null;
+  /** The versions the page sells, when there are several. */
+  variants: PreviewVariant[];
   error: string | null;
+}
+
+export interface PreviewVariant {
+  label: string;
+  url: string | null;
+  price: number | null;
+  currency: string | null;
+  inStock: boolean | null;
 }
 
 export interface Offer {
@@ -294,10 +306,12 @@ export interface Observation {
   /** Item price as listed. */
   price: number | null;
   /**
-   * false when the page shows the price without VAT (Amazon Business usually does). headlineEur then adds
-   * the delivery country's standard VAT rate, so it compares with other listings. null: not stated.
+   * false when the price is without VAT (Amazon Business leads with it). It's compared with other listings
+   * as it is: the lowest price the page states. null: the page doesn't say.
    */
   priceIncludesVat: boolean | null;
+  /** The item price with VAT, when the page shows it next to the price without VAT (Amazon Business). */
+  priceInclVat: number | null;
   /** Shipping the page showed for the delivery location, 0 when free, null when not shown. */
   shipping: number | null;
   /** price + shipping, when shipping is known. */
@@ -356,6 +370,8 @@ export interface BestPrice {
   headlinePrice: number;
   currency: Currency;
   headlineEur: number | null;
+  /** false: the price is without VAT (Amazon Business). */
+  priceIncludesVat: boolean | null;
   checkedAt: string;
 }
 
@@ -363,6 +379,7 @@ export interface ProductSummary {
   id: number;
   name: string;
   ean: string | null;
+  notes: string | null;
   acceptedConditions: Condition[];
   archived: boolean;
   createdAt: string;
@@ -375,7 +392,6 @@ export interface ProductSummary {
 }
 
 export interface ProductDetail extends ProductSummary {
-  notes: string | null;
   listings: Listing[];
   alertRules: AlertRule[];
 }

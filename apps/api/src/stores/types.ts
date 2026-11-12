@@ -54,6 +54,9 @@ export interface ListingTarget {
   marketplace: MarketplaceInfo;
   externalId: string;
   url: string;
+  /** The listing's version check terms. On a page that sells several versions, they pick the version. */
+  guardInclude?: string[];
+  guardExclude?: string[];
 }
 
 /** What checking a listing needs: built-in adapters and the generic one for custom stores. */

@@ -6,7 +6,7 @@ import type { Catalog } from '@price-tracker/shared';
 import type { Db } from '../db/client.ts';
 import { appSessions, listings, settings } from '../db/schema.ts';
 import { log } from '../log.ts';
-import { formatEur, formatMoney, marketplaceLabel } from '../notify/format.ts';
+import { formatEur, formatPrice, marketplaceLabel } from '../notify/format.ts';
 import type { Notify } from '../notify/index.ts';
 import { refreshFxRates } from '../pricing/fx.ts';
 import { loadProductDetails } from '../views/products.ts';
@@ -30,7 +30,7 @@ export async function dailySummaryText(db: Db, catalog: Catalog): Promise<string
     .map((p) => {
       if (!p.best) return `• ${p.name}: no price yet`;
       const eur = p.best.currency !== 'EUR' && p.best.headlineEur !== null ? ` (about ${formatEur(p.best.headlineEur)})` : '';
-      return `• ${p.name}: ${formatMoney(p.best.headlinePrice, p.best.currency)}${eur} at ${marketplaceLabel(catalog, p.best.marketplace, p.best.store)}`;
+      return `• ${p.name}: ${formatPrice(p.best)}${eur} at ${marketplaceLabel(catalog, p.best.marketplace, p.best.store)}`;
     })
     .join('\n');
 }

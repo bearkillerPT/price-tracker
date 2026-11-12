@@ -1,7 +1,7 @@
 // Previews of unknown shops: one request to a product page, to see whether the shop can be added as a
 // custom store. The result is kept for a while, so adding the listing right after doesn't fetch the
 // page a second time: it becomes the listing's first check.
-import type { Condition, SelectorTest, StorePreview } from '@price-tracker/shared';
+import type { Condition, MarketplaceInfo, PreviewVariant, SelectorTest, StorePreview } from '@price-tracker/shared';
 import { storeIdFromHost } from '@price-tracker/shared';
 import { countryFromHost } from '../catalog.ts';
 import { genericAdapter, pageRef } from './generic/adapter.ts';
@@ -22,10 +22,18 @@ const CONDITION: Record<string, Condition> = {
   DamagedCondition: 'used',
 };
 
-type PreviewRaw = { protection?: string; dataSource?: StorePreview['dataSource']; gtin?: string | null; siteName?: string | null; condition?: string | null; selectorText?: string | null };
+type PreviewRaw = {
+  protection?: string;
+  dataSource?: StorePreview['dataSource'];
+  gtin?: string | null;
+  siteName?: string | null;
+  condition?: string | null;
+  selectorText?: string | null;
+  variants?: PreviewVariant[];
+};
 
 export class Previewer {
-  private results = new Map<string, { outcome: CheckOutcome; at: Date }>();
+  private results = new Map<string, { outcome: CheckOutcome; at: Date; marketplace: MarketplaceInfo; ref: string }>();
   /** Pages as loaded, so a selector test right after a preview reads the same page instead of loading it again. */
   private pages = new Map<string, { response: PageResponse; at: number }>();
   private lastRequest = new Map<string, number>();
@@ -78,7 +86,7 @@ export class Previewer {
     } catch (err) {
       outcome = { ...emptyOutcome('error', err instanceof Error ? err.message : String(err)), requestCount: 1 };
     }
-    this.results.set(pageUrl, { outcome, at: this.now() });
+    this.results.set(pageUrl, { outcome, at: this.now(), marketplace, ref });
     return { pageUrl, host, id, outcome };
   }
 
@@ -105,6 +113,8 @@ export class Previewer {
       availabilityText: outcome.availabilityText,
       seller: outcome.seller,
       gtin: raw.gtin ?? null,
+      variantLabel: outcome.variantLabel,
+      variants: raw.variants ?? [],
       error: outcome.error,
     };
   }
@@ -132,11 +142,25 @@ export class Previewer {
     };
   }
 
-  /** A recent successful load of this page, for use as a new listing's first check. Used once. */
-  take(pageUrl: string): { outcome: CheckOutcome; at: Date } | null {
+  /** The page as a recent preview loaded it, if it did. */
+  recentPage(pageUrl: string): PageResponse | null {
+    const hit = this.pages.get(pageUrl);
+    return hit && this.now().getTime() - hit.at < KEEP_MS ? hit.response : null;
+  }
+
+  /**
+   * A recent successful load of this page, for use as a new listing's first check. Used once. With version
+   * check terms, the page is read again with them (no request), since on a page that sells several versions
+   * they pick the one the listing tracks.
+   */
+  async take(pageUrl: string, guard: { guardInclude?: string[]; guardExclude?: string[] } = {}): Promise<{ outcome: CheckOutcome; at: Date } | null> {
     const hit = this.results.get(pageUrl);
     this.results.delete(pageUrl);
     if (!hit || this.now().getTime() - hit.at.getTime() >= KEEP_MS) return null;
-    return hit.outcome.status === 'ok' || hit.outcome.status === 'unavailable' ? hit : null;
+    if (hit.outcome.status !== 'ok' && hit.outcome.status !== 'unavailable') return null;
+    const page = this.pages.get(pageUrl);
+    if (!(guard.guardInclude?.length || guard.guardExclude?.length) || !page) return hit;
+    const outcome = await genericAdapter.check({ marketplace: hit.marketplace, externalId: hit.ref, url: pageUrl, ...guard }, async () => page.response);
+    return { outcome, at: hit.at };
   }
 }

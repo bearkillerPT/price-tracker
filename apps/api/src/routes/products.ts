@@ -17,6 +17,7 @@ import { alertRules, listings, products } from '../db/schema.ts';
 import { HttpError, idParam, validate } from '../http/errors.ts';
 import type { Previewer } from '../stores/preview.ts';
 import { adapterFor, canonicalUrlFor, parseProductUrl } from '../stores/registry.ts';
+import type { StoreIcons } from '../stores/icons.ts';
 import { loadHistory, loadProductDetail, loadProductDetails, toSummary } from '../views/products.ts';
 
 export interface ProductRouteDeps {
@@ -27,9 +28,11 @@ export interface ProductRouteDeps {
   /** A fresh preview of a custom store's page becomes the new listing's first check. */
   previewer: Previewer;
   recordOutcome: CheckRunner['recordOutcome'];
+  /** Learns a new store's icon from the page its preview loaded. */
+  icons: StoreIcons;
 }
 
-export function productRoutes({ db, catalog, wake, previewer, recordOutcome }: ProductRouteDeps): Router {
+export function productRoutes({ db, catalog, wake, previewer, recordOutcome, icons }: ProductRouteDeps): Router {
   const r = Router();
 
   const detail = async (id: number) => {
@@ -131,8 +134,10 @@ export function productRoutes({ db, catalog, wake, previewer, recordOutcome }: P
     if (!inserted.length) throw new HttpError(409, 'This product is already tracked in those marketplaces');
     // Just previewed this page? That request counts as the first check instead of making another
     for (const l of inserted) {
-      const preview = previewer.take(l.url);
+      const preview = await previewer.take(l.url, { guardInclude: body.guardInclude, guardExclude: body.guardExclude });
       if (preview) await recordOutcome(l.id, preview.outcome, preview.at);
+      const page = previewer.recentPage(l.url);
+      if (page) void icons.learn(body.store, page);
     }
     wakeFor(body.store);
     res.status(201).json(await detail(productId));

@@ -15,6 +15,8 @@ export interface AmazonPage {
   currency: Currency | null;
   /** false: the price area says the price is without VAT (Amazon Business); true: with VAT; null: doesn't say. */
   priceIncludesVat: boolean | null;
+  /** The price with VAT, when the page shows it next to the price without VAT (Amazon Business). */
+  priceInclVat: number | null;
   /** 0 when delivery is free, null when the page shows no delivery price. */
   shipping: number | null;
   deliveryText: string | null;
@@ -65,7 +67,21 @@ const LANGUAGES = ['en', 'pt', 'es', 'de', 'fr', 'it', 'nl', 'sv', 'pl'];
 const EXCLUDES_VAT = /\bexcl(?:\.|uding)?\s*VAT\b|\bex\.?\s*VAT\b|without VAT|exkl\.?\s*MwSt|ohne MwSt|zzgl\.?\s*MwSt|\bHT\b|hors tax|IVA esclusa|IVA escl\.|esclusa IVA|sin IVA|IVA no incluido|IVA excluído|sem IVA|excl\.?\s*btw|exkl\.?\s*moms|bez VAT|\bnetto\b/i;
 const INCLUDES_VAT = /\bincl(?:\.|uding)?\s*VAT\b|include[sd]? VAT|inkl\.?\s*MwSt|\bTTC\b|IVA inclusa|IVA incluido|IVA incluído|incluem IVA|incl\.?\s*btw|inkl\.?\s*moms|z VAT|\bbrutto\b/i;
 
-/** Whether the price area states the price with or without VAT. */
+/**
+ * The buy box's price without and with VAT, when the page labels both: Amazon Business shows
+ * "€794.12 (945.00 incl. VAT)" in the buy box and "€794.12 excl. VAT / €945.00 incl. VAT" in the price table.
+ */
+export function labelledVatPrices($: cheerio.CheerioAPI): { excl: number | null; incl: number | null } {
+  const amount = (el: ReturnType<typeof $>) => parseAmount(clean(el.find('.a-offscreen').first().text()));
+  const buyBox = $('#price_vat_excl').first();
+  let excl = buyBox.length ? amount(buyBox) : null;
+  let incl = buyBox.length ? amount(buyBox.nextAll().filter((_, el) => INCLUDES_VAT.test($(el).text())).first()) : null;
+  excl ??= amount($('.priceblock_vat_excl_price').first());
+  incl ??= amount($('.priceblock_vat_inc_price').first());
+  return { excl, incl };
+}
+
+/** Whether the price area states the price with or without VAT, from its wording (when it doesn't label both amounts). */
 export function priceVat($: cheerio.CheerioAPI, html: string): boolean | null {
   const area = ['#corePriceDisplay_desktop_feature_div', '#corePrice_feature_div', '#apex_desktop', '#vatMessage_feature_div', '#taxInclusiveMessage']
     .map((sel) => $(sel).first().text())
@@ -109,6 +125,7 @@ export function parseAmazonPage(html: string, marketplace: MarketplaceInfo): Ama
     price: null,
     currency: null,
     priceIncludesVat: null,
+    priceInclVat: null,
     shipping: null,
     deliveryText: null,
     deliveryCountry: null,
@@ -152,7 +169,19 @@ export function parseAmazonPage(html: string, marketplace: MarketplaceInfo): Ama
       if (page.price !== null) break;
     }
   }
-  page.priceIncludesVat = page.price !== null ? priceVat($, html) : null;
+  // Both amounts labelled (Amazon Business): track the one without VAT, the lower one the page leads with,
+  // whichever of the two the add-to-cart form carries. Otherwise go by the price area's wording.
+  const vat = labelledVatPrices($);
+  const near = (a: number, b: number | null) => b !== null && Math.abs(a - b) < 0.005;
+  if (page.price !== null && vat.excl !== null && (near(page.price, vat.incl) || near(page.price, vat.excl))) {
+    page.price = vat.excl;
+    page.priceIncludesVat = false;
+    page.priceInclVat = vat.incl;
+  } else if (page.price !== null && near(page.price, vat.excl)) {
+    page.priceIncludesVat = false;
+  } else {
+    page.priceIncludesVat = page.price !== null ? priceVat($, html) : null;
+  }
   page.currency =
     currencyField && (CURRENCIES as readonly string[]).includes(currencyField) ? (currencyField as Currency) : page.price !== null ? marketplace.currency : null;
 
@@ -191,9 +220,14 @@ export function parseAmazonPage(html: string, marketplace: MarketplaceInfo): Ama
   page.inStock = canBuy && !outOfStock;
   page.availabilityText = text('#availability') ?? text('#outOfStock .a-color-price') ?? text('#outOfStock');
 
-  page.seller =
-    text('#merchantInfoFeature_feature_div .offer-display-feature-text-message') ?? text('#sellerProfileTriggerId') ?? text('#merchant-info');
-  page.shipsFrom = text('#fulfillerInfoFeature_feature_div .offer-display-feature-text-message');
+  // The older seller line (Amazon Business): "Sold by <seller> and Fulfilled by Amazon.", after a popover that
+  // isn't shown (a VAT invoice note)
+  const merchant = $('#merchant-info').first().clone();
+  merchant.find('.a-popover-preload, .a-declarative').remove();
+  const merchantSeller = clean(merchant.find('a[href*="seller="]').first().text()) ?? clean(merchant.text());
+  const fulfilledByAmazon = merchant.find('a[href*="dp_fulfillment"]').length > 0;
+  page.seller = text('#merchantInfoFeature_feature_div .offer-display-feature-text-message') ?? text('#sellerProfileTriggerId') ?? merchantSeller;
+  page.shipsFrom = text('#fulfillerInfoFeature_feature_div .offer-display-feature-text-message') ?? (fulfilledByAmazon ? 'Amazon' : null);
 
   return page;
 }

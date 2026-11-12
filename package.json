@@ -12,6 +12,7 @@
     "test": "pnpm -r test",
     "db:up": "docker compose -f compose.dev.yaml up -d",
     "db:generate": "pnpm --filter @price-tracker/api db:generate",
-    "cli": "pnpm --filter @price-tracker/api cli"
+    "cli": "pnpm --filter @price-tracker/api cli",
+    "reset-password": "pnpm --filter @price-tracker/api cli reset-password"
   }
 }

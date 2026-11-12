@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import { BUILT_IN_CATALOG, marketplaceIn } from '@price-tracker/shared';
 import { open, seal } from '../src/auth/secret-box.ts';
 import { amazonAccount, parseAmazonPage } from '../src/stores/amazon/parse.ts';
-import { withStandardVat } from '../src/pricing/vat.ts';
 import { createHttpFetcher } from '../src/stores/http.ts';
 import { jarFromState, toBrowserCookie } from '../src/stores/sessions.ts';
 import type { BrowserState } from '../src/stores/sessions.ts';
@@ -109,9 +108,21 @@ describe('VAT', () => {
     expect(page).toMatchObject({ priceIncludesVat: false, price: 949, signedIn: true });
   });
 
-  it('adds the standard rate for comparisons', () => {
-    expect(withStandardVat(958.22, 'PT')).toBe(1178.61);
-    expect(withStandardVat(100, 'DE')).toBe(119);
-    expect(withStandardVat(100, 'XX')).toBeNull();
+  it('tracks the price without VAT when a business page labels both (Amazon Business Spain)', () => {
+    // The buy box shows "€794.12 (945.00 incl. VAT)"; the add-to-cart form carries 945.0
+    const page = parseAmazonPage(amazonFixture('business-es-vat-both'), marketplaceIn(BUILT_IN_CATALOG, 'business.amazon.es')!);
+    expect(page).toMatchObject({
+      kind: 'product',
+      signedIn: true,
+      accountName: 'Alex',
+      price: 794.12,
+      priceIncludesVat: false,
+      priceInclVat: 945,
+      currency: 'EUR',
+      shipping: 0,
+      // Not the VAT invoice note next to it
+      seller: 'MICRO COMPUTER (HK) TECH LIMITED',
+      shipsFrom: 'Amazon',
+    });
   });
 });

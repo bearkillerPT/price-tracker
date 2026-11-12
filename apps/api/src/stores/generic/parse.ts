@@ -1,6 +1,8 @@
 // Reads a shop's product page from the schema.org data most shops publish for search engines:
 // JSON-LD first, then microdata, then price meta tags. Pages also describe other products
 // (recommendations, colour variants), so the product whose URL matches the page's canonical address wins.
+// A page that sells several versions (a ProductGroup, as Shopify publishes) also lists them, each with its
+// own price; which one a listing tracks is the adapter's choice.
 import * as cheerio from 'cheerio';
 import { parseAmount } from '../../pricing/money.ts';
 
@@ -15,6 +17,16 @@ export interface ShopOffer {
   shipping: number | null;
 }
 
+/** One version of a product sold on the same page, e.g. "32GB RAM + 1TB SSD". */
+export interface ShopVariant {
+  /** The version's name without the product's name in front of it. */
+  label: string;
+  /** The version's own address (Shopify: the page with ?variant=…). */
+  url: string | null;
+  sku: string | null;
+  offer: ShopOffer;
+}
+
 export interface ShopPage {
   dataSource: DataSource | null;
   title: string | null;
@@ -23,6 +35,8 @@ export interface ShopPage {
   /** The offer the page leads with: the first in-stock one with a price, else the first with a price. */
   offer: ShopOffer | null;
   offers: ShopOffer[];
+  /** The versions the page sells, when it lists more than one; each has its own price. */
+  variants: ShopVariant[];
   inStock: boolean | null;
   availabilityText: string | null;
   siteName: string | null;
@@ -125,15 +139,58 @@ function jsonLdOffer(o: Json): ShopOffer {
   };
 }
 
+const absolute = (u: unknown, base: string): string | null => {
+  if (typeof u !== 'string' || !u) return null;
+  try {
+    return new URL(u, base).toString();
+  } catch {
+    return null;
+  }
+};
+
+/** "MINISFORUM M1 Pro - 32GB RAM + 1TB SSD" in group "MINISFORUM M1 Pro" -> "32GB RAM + 1TB SSD". */
+function variantLabel(v: Json, groupName: string | null): string | null {
+  const name = str(v.name);
+  if (name && groupName && name.toLowerCase().startsWith(groupName.toLowerCase())) {
+    const rest = name.slice(groupName.length).replace(/^[\s\-–—:|/,]+/, '').trim();
+    if (rest) return rest;
+  }
+  if (name) return name;
+  // No name: the properties the versions differ in
+  const props = ['color', 'size', 'material', 'pattern'].map((k) => str(v[k])).filter((x): x is string => !!x);
+  return props.length ? props.join(' / ') : null;
+}
+
+/** The versions of a ProductGroup (schema.org hasVariant), when there's more than one. */
+function variantsOf(group: Json, pageUrl: string): ShopVariant[] {
+  const groupName = str(group.name);
+  const variants = ([] as unknown[])
+    .concat(group.hasVariant ?? [])
+    .filter((v): v is Json => !!v && typeof v === 'object')
+    .flatMap((v): ShopVariant[] => {
+      const offerJson = firstOf(v.offers) as Json | undefined;
+      const label = variantLabel(v, groupName);
+      if (!label || !offerJson) return [];
+      const url = absolute(v.url, pageUrl) ?? absolute(offerJson.url, pageUrl) ?? absolute(typeof v['@id'] === 'string' ? v['@id'].replace(/#.*$/, '') : null, pageUrl);
+      return [{ label, url, sku: str(v.sku), offer: jsonLdOffer(offerJson) }];
+    });
+  return variants.length > 1 ? variants : [];
+}
+
 function fromJsonLd($: cheerio.CheerioAPI, pageUrl: string, canonical: string | null): Partial<ShopPage> | null {
-  const products = jsonLdNodes($).filter((n) => isType(n, /^Product(Group|Model)?$/));
+  const nodes = jsonLdNodes($);
+  const products = nodes.filter((n) => isType(n, /^Product(Group|Model)?$/));
   if (!products.length) return null;
   const offersOf = (p: Json): Json[] => ([] as Json[]).concat(p.offers ?? []).flatMap((o) => (o?.offers ? [o, ...[].concat(o.offers)] : [o]));
   const matches = (p: Json) => [p.url, p['@id'], ...offersOf(p).map((o) => o?.url)].some((u) => sameAddress(u, canonical ?? pageUrl, pageUrl));
   const product = products.find(matches) ?? products.find((p) => offersOf(p).length) ?? products[0]!;
   const offers = offersOf(product).map(jsonLdOffer);
+  // Pages can carry the same group twice (the theme's and an app's): the page's own, else the first
+  const groups = products.filter((p) => isType(p, /^ProductGroup$/) && p.hasVariant);
+  const group = groups.find((g) => [g.url, g['@id']].some((u) => sameAddress(typeof u === 'string' ? u.replace(/#.*$/, '') : u, canonical ?? pageUrl, pageUrl))) ?? groups[0];
   return {
     dataSource: 'json-ld',
+    variants: group ? variantsOf(group, pageUrl) : [],
     title: str(product.name),
     sku: str(product.sku),
     gtin: str(product.gtin13) ?? str(product.gtin) ?? str(product.gtin14) ?? str(product.gtin12) ?? str(product.gtin8) ?? str(product.ean),
@@ -242,6 +299,7 @@ export function parseShopPage(html: string, pageUrl: string): ShopPage {
     gtin: best?.gtin ?? null,
     offer: best?.offer ?? null,
     offers: best?.offers ?? [],
+    variants: best?.variants ?? [],
     inStock: availability.inStock,
     availabilityText: availability.text,
     siteName: str($('meta[property="og:site_name"]').attr('content')),

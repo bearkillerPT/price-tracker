@@ -10,6 +10,7 @@ const best = (eur: number): BestPrice => ({
   marketplace: 'amazon.de',
   condition: 'new',
   headlinePrice: eur,
+  priceIncludesVat: true,
   currency: 'EUR',
   headlineEur: eur,
   checkedAt: '2026-11-11T12:00:00Z',

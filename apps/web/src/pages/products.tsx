@@ -5,18 +5,22 @@ import { Plus, TriangleAlert } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 
+import { ProductActions } from "@/components/product-actions";
 import { ProductFormDialog } from "@/components/product-form-dialog";
+import { RequestRates } from "@/components/request-budget";
+import { MarketplaceName } from "@/components/store-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { keys, useLabels, useProducts } from "@/hooks/queries";
+import { keys, useLabels, useProducts, useStores } from "@/hooks/queries";
 import { errorMessage, post } from "@/lib/api";
 import { conditionLabel, formatDateTime, formatEur, formatMoney, relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function ProductsPage() {
   const products = useProducts();
+  const stores = useStores();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [adding, setAdding] = useState(false);
@@ -32,8 +36,11 @@ export function ProductsPage() {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
+  // The stores the enabled listings hit (or that are paused): how often, and how risky that is
+  const active = (stores.data ?? []).filter((g) => g.enabledListings > 0 || g.pausedUntil !== null);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Products</h1>
         <ProductFormDialog
@@ -65,6 +72,8 @@ export function ProductsPage() {
       ) : (
         <ProductTable products={products.data} />
       )}
+
+      <RequestRates groups={active} />
     </div>
   );
 }
@@ -80,6 +89,9 @@ function ProductTable({ products }: { products: ProductSummary[] }) {
             <TableHead className="text-right">Best price</TableHead>
             <TableHead className="hidden md:table-cell">Where</TableHead>
             <TableHead className="hidden sm:table-cell">Last checked</TableHead>
+            <TableHead className="w-10">
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -105,7 +117,10 @@ function ProductTable({ products }: { products: ProductSummary[] }) {
               <TableCell className="text-right align-top">
                 {p.best ? (
                   <>
-                    <div className="font-semibold tabular-nums">{formatMoney(p.best.headlinePrice, p.best.currency)}</div>
+                    <div className="font-semibold tabular-nums">
+                      {formatMoney(p.best.headlinePrice, p.best.currency)}
+                      {p.best.priceIncludesVat === false && <span className="ml-1 text-xs font-normal text-muted-foreground">excl. VAT</span>}
+                    </div>
                     {p.best.currency !== "EUR" && p.best.headlineEur != null && (
                       <div className="text-xs text-muted-foreground tabular-nums">≈ {formatEur(p.best.headlineEur)}</div>
                     )}
@@ -118,8 +133,8 @@ function ProductTable({ products }: { products: ProductSummary[] }) {
               <TableCell className="hidden align-top md:table-cell">
                 {p.best ? (
                   <>
-                    <div>{marketplaceLabel(p.best.marketplace)}</div>
-                    <div className="text-xs text-muted-foreground">{conditionLabel(p.best.condition)}</div>
+                    <MarketplaceName marketplace={p.best.marketplace} />
+                    <div className="pl-[22px] text-xs text-muted-foreground">{conditionLabel(p.best.condition)}</div>
                   </>
                 ) : (
                   <span className="text-muted-foreground">—</span>
@@ -129,6 +144,9 @@ function ProductTable({ products }: { products: ProductSummary[] }) {
                 <time dateTime={p.lastCheckedAt ?? undefined} title={formatDateTime(p.lastCheckedAt)}>
                   {relativeTime(p.lastCheckedAt)}
                 </time>
+              </TableCell>
+              <TableCell className="align-top">
+                <ProductActions product={p} showOpen />
               </TableCell>
             </TableRow>
           ))}

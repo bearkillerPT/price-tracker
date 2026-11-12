@@ -36,6 +36,13 @@
       "when": 1794436161550,
       "tag": "0004_price_includes_vat",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794443822034,
+      "tag": "0005_store_icons",
+      "breakpoints": true
     }
   ]
 }

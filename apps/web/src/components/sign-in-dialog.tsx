@@ -65,7 +65,7 @@ export function SignInDialog({
             signed in". Your password isn't kept, only the cookies Amazon sets, encrypted. You can paste (Ctrl+V) from your
             password manager, and ticking "Keep me signed in" makes the sign-in last longer.
             {store === "amazon-business" &&
-              " Amazon Business usually shows prices without VAT; checks note it, and compare them with VAT added."}
+              " Amazon Business leads with prices without VAT; checks keep that one, the lowest, and the price with VAT next to it."}
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1">

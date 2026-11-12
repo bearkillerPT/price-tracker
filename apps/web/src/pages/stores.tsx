@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   MIN_INTERVAL_MINUTES,
@@ -12,10 +12,13 @@ import {
   type StoreInfo,
 } from "@price-tracker/shared";
 import { CirclePause, Pencil, Trash2, TriangleAlert } from "lucide-react";
+import { useLocation } from "react-router";
 import { toast } from "sonner";
 
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { BudgetMeter, RiskLabel, isPaused } from "@/components/request-budget";
 import { StatusBadge } from "@/components/status-badge";
+import { StoreIcon } from "@/components/store-icon";
 import { StoreAccounts } from "@/components/store-accounts";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -29,10 +32,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { keys, useCatalog, useStores } from "@/hooks/queries";
 import { del, errorMessage, patch, post } from "@/lib/api";
 import { INTERVAL_PRESETS, formatDateTime, formatInterval, formatRate, relativeTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 export function StoresPage() {
   const stores = useStores();
+  const { hash } = useLocation();
+
+  // Arriving from a store's request card (#store-<group>): show that store's card
+  useEffect(() => {
+    if (!hash || !stores.data) return;
+    const card = document.getElementById(decodeURIComponent(hash.slice(1)));
+    card?.scrollIntoView({ block: "center" });
+    card?.focus({ preventScroll: true });
+  }, [hash, stores.data]);
 
   return (
     <div className="space-y-4">
@@ -71,10 +82,6 @@ export function StoresPage() {
   );
 }
 
-const LEVEL_TEXT = { ok: "text-success", warn: "text-warning", danger: "text-destructive" } as const;
-const LEVEL_BAR = { ok: "bg-success", warn: "bg-warning", danger: "bg-destructive" } as const;
-const LEVEL_LABEL = { ok: "Within budget", warn: "Above the warning level", danger: "Well above the warning level" } as const;
-
 function RateGroupCard({ group: g }: { group: RateGroupStatus }) {
   const qc = useQueryClient();
   const catalog = useCatalog();
@@ -99,16 +106,16 @@ function RateGroupCard({ group: g }: { group: RateGroupStatus }) {
     onError: (e) => toast.error(errorMessage(e)),
   });
 
-  const paused = g.pausedUntil !== null && new Date(g.pausedUntil).getTime() > Date.now();
-  // The bar's full width is 1.5x the strong-warning level, so both thresholds sit inside it
-  const scale = g.dangerPerHour * 1.5;
-  const pct = (n: number) => `${Math.min(100, (n / scale) * 100)}%`;
+  const paused = isPaused(g);
   const statuses = Object.entries(g.actualLastHour.byStatus).filter(([, n]) => (n ?? 0) > 0) as [ObservationStatus, number][];
 
   return (
-    <Card>
+    <Card id={`store-${g.group}`} tabIndex={-1} className="scroll-mt-20 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
       <CardHeader>
-        <CardTitle>{g.label}</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <StoreIcon store={g.stores[0] ?? g.group} label={g.label} className="size-5" />
+          {g.label}
+        </CardTitle>
         <CardDescription>
           {custom
             ? `${marketplaceIn(catalog, custom.id)?.host ?? custom.id} · checked every ${formatInterval(custom.defaultIntervalMinutes)} by default`
@@ -157,26 +164,13 @@ function RateGroupCard({ group: g }: { group: RateGroupStatus }) {
         <div className="space-y-2">
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-sm">Planned</span>
-            <span className={cn("text-sm font-semibold tabular-nums", LEVEL_TEXT[g.level])}>
-              {formatRate(g.plannedPerHour)} requests/hour
-            </span>
+            <span className="text-sm font-semibold tabular-nums">{formatRate(g.plannedPerHour)} requests/hour</span>
           </div>
-          <div
-            className="relative h-2 rounded-full bg-muted"
-            role="meter"
-            aria-label={`Planned requests per hour for ${g.label}`}
-            aria-valuemin={0}
-            aria-valuemax={scale}
-            aria-valuenow={Number(g.plannedPerHour.toFixed(2))}
-            aria-valuetext={`${formatRate(g.plannedPerHour)} per hour, ${LEVEL_LABEL[g.level].toLowerCase()}`}
-          >
-            <div className={cn("h-full rounded-full", LEVEL_BAR[g.level])} style={{ width: pct(g.plannedPerHour) }} />
-            <div className="absolute top-[-3px] h-[14px] w-px bg-warning" style={{ left: pct(g.warnPerHour) }} aria-hidden />
-            <div className="absolute top-[-3px] h-[14px] w-px bg-destructive" style={{ left: pct(g.dangerPerHour) }} aria-hidden />
-          </div>
+          <BudgetMeter group={g} />
           <p className="text-xs text-muted-foreground">
-            {LEVEL_LABEL[g.level]}. Warning above {g.warnPerHour}/hour, strong warning above {g.dangerPerHour}/hour. Sum of every
-            enabled listing's interval.
+            <RiskLabel level={g.level} className="mr-1 font-medium" /> Warning above {g.warnPerHour}/hour, strong warning above{" "}
+            {g.dangerPerHour}/hour. It's what every enabled listing's check interval adds up to: a listing checked every 3 hours
+            adds a third of a request per hour.
           </p>
         </div>
 

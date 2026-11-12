@@ -1,3 +1,5 @@
+// The version check: terms a page's title (or selected version) must and mustn't contain. Shared so the web
+// app can show which of a page's versions the terms pick before a listing is added.
 /**
  * Lowercases and keeps only letters, digits, "/" and "+", so "32 GB" matches "32GB", "Pro-125H" matches
  * "Pro125H" and "M1, Pro-125H" matches "M1 Pro-125H". Terms and page text go through the same function.

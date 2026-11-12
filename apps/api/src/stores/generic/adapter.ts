@@ -1,10 +1,12 @@
 // Custom stores: any shop whose product pages publish schema.org product data. One request per check.
-import { isCurrency } from '@price-tracker/shared';
+import { guardFailures, isCurrency } from '@price-tracker/shared';
 import type { MarketplaceInfo } from '@price-tracker/shared';
+import { formatMoney } from '../../notify/format.ts';
 import { detectProtection } from '../protection.ts';
 import { emptyOutcome } from '../types.ts';
 import type { CheckAdapter, CheckOutcome, ListingTarget, PageFetcher } from '../types.ts';
-import { parseShopPage, readSelector } from './parse.ts';
+import { parseShopPage, readAvailability, readSelector } from './parse.ts';
+import type { ShopPage, ShopVariant } from './parse.ts';
 
 // Analytics and ad parameters: they don't change the page, so they're dropped from the listing's address
 const TRACKING_PARAM = /^(utm_.+|gclid|gclsrc|dclid|fbclid|msclkid|yclid|gad_source|gbraid|wbraid|srsltid|_ga|_gl|mc_cid|mc_eid|ref|ref_|tag|affiliate|aff_id|source|campaign)$/i;
@@ -25,6 +27,61 @@ export const acceptLanguageFor = (marketplace: MarketplaceInfo): string => {
   const locale = localeFor(marketplace.country);
   return locale === 'en-GB' ? 'en-GB,en;q=0.9' : `${locale},${locale.split('-')[0]};q=0.9,en;q=0.8`;
 };
+
+/** Host, path and the query parameters that pick the page, in a fixed order: to tell whether two links are the same version. */
+function versionKey(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    url.searchParams.sort();
+    return url.hostname.replace(/^www\./, '').toLowerCase() + pageRef(url).replace(/\/+(?=\?|$)/, '');
+  } catch {
+    return null;
+  }
+}
+
+/** The versions' labels without the part they all share ("Intel Core Ultra 5 125H / 32GB RAM + 1TB SSD" -> "32GB RAM + 1TB SSD"). */
+function shortLabels(variants: ShopVariant[]): string[] {
+  const parts = variants.map((v) => v.label.split(' / '));
+  let shared = 0;
+  while (parts.every((p) => p.length > shared + 1 && p[shared] === parts[0]![shared])) shared++;
+  return parts.map((p) => p.slice(shared).join(' / '));
+}
+
+function describeVersions(variants: ShopVariant[]): string {
+  const labels = shortLabels(variants);
+  return variants
+    .map((v, i) => {
+      const price = v.offer.price !== null ? ` ${formatMoney(v.offer.price, v.offer.currency ?? 'EUR')}` : '';
+      const stock = readAvailability(v.offer.availability).inStock === false ? ' (out of stock)' : '';
+      return `${labels[i]}${price}${stock}`;
+    })
+    .join('; ');
+}
+
+/**
+ * Which of the page's versions the listing tracks: the one its link points at (?variant=…), else the only
+ * one its version check terms fit, else (no terms) the page's default, the first in stock. A string when
+ * the terms fit none or several: the check reports that instead of a price.
+ */
+function chooseVariant(page: ShopPage, target: ListingTarget, pageUrl: string): ShopVariant | string | null {
+  const { variants } = page;
+  if (!variants.length) return null;
+  // Only a link with a query picks a version: some shops give the default version the bare page address
+  const wanted = [target.url, pageUrl].filter((u) => u.includes('?')).map(versionKey).filter((k): k is string => !!k);
+  const linked = wanted.length ? variants.find((v) => v.url && wanted.includes(versionKey(v.url) ?? '')) : undefined;
+  if (linked) return linked;
+  const include = target.guardInclude ?? [];
+  const exclude = target.guardExclude ?? [];
+  if (include.length || exclude.length) {
+    const fits = variants.filter((v) => guardFailures(`${page.title ?? ''} | ${v.label}`, include, exclude).length === 0);
+    if (fits.length === 1) return fits[0]!;
+    return fits.length === 0
+      ? `None of the page's ${variants.length} versions fits the version check terms. The page sells: ${describeVersions(variants)}`
+      : `${fits.length} of the page's versions fit the version check terms: ${describeVersions(fits)}. Add a term only one of them has.`;
+  }
+  const priced = variants.filter((v) => v.offer.price !== null);
+  return priced.find((v) => readAvailability(v.offer.availability).inStock !== false) ?? priced[0] ?? variants[0]!;
+}
 
 async function check(target: ListingTarget, fetchPage: PageFetcher): Promise<CheckOutcome> {
   const res = await fetchPage(target.url, { marketplace: target.marketplace, acceptLanguage: acceptLanguageFor(target.marketplace) });
@@ -76,28 +133,38 @@ async function check(target: ListingTarget, fetchPage: PageFetcher): Promise<Che
   if (!page.dataSource) {
     return { ...emptyOutcome('error', 'No product data on this page (the shop doesn\'t publish schema.org product data)'), ...base, title: page.title, raw };
   }
-  const offer = page.offer;
+
+  // Several versions on one page: track the chosen one's price
+  const variant = chooseVariant(page, target, res.url);
+  if (page.variants.length) {
+    raw.variants = page.variants.map((v) => ({ label: v.label, url: v.url, price: v.offer.price, currency: v.offer.currency, inStock: readAvailability(v.offer.availability).inStock }));
+  }
+  if (typeof variant === 'string') return { ...emptyOutcome('variant_mismatch', variant), ...base, title: page.title, raw };
+  if (variant) raw.variant = variant.url;
+  const offer = variant?.offer ?? page.offer;
+  const availability = variant ? readAvailability(variant.offer.availability) : { inStock: page.inStock, text: page.availabilityText };
   const price = offer?.price ?? null;
-  const status: CheckOutcome['status'] = page.inStock === false ? 'unavailable' : price !== null ? 'ok' : 'error';
+  const status: CheckOutcome['status'] = availability.inStock === false ? 'unavailable' : price !== null ? 'ok' : 'error';
   const currency = offer?.currency && isCurrency(offer.currency.toUpperCase()) ? (offer.currency.toUpperCase() as CheckOutcome['currency']) : price !== null ? target.marketplace.currency : null;
   return {
     ...base,
     status,
     pageExternalId: null,
     title: page.title,
-    variantLabel: null,
+    variantLabel: variant?.label ?? null,
     currency,
     price,
     priceIncludesVat: null,
     shipping: offer?.shipping ?? null,
-    inStock: page.inStock,
-    availabilityText: page.availabilityText,
+    inStock: availability.inStock,
+    availabilityText: availability.text,
     deliveryLocation: null,
     deliveryLocationSource: null,
     deliveryText: null,
     seller: offer?.seller ?? null,
     shipsFrom: null,
-    offers: page.offers
+    // Other sellers' offers for this product; the page's other versions are different products
+    offers: (variant ? [] : page.offers)
       .filter((o) => o !== offer && o.price !== null)
       .map((o) => ({ seller: o.seller, condition: o.condition, price: o.price!, shipping: o.shipping, currency: currency ?? target.marketplace.currency })),
     error: status === 'error' ? 'The product data has no price' : null,

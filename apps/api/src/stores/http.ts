@@ -1,8 +1,9 @@
 import { CookieJar } from 'tough-cookie';
+import { isPrivateHost } from './private-hosts.ts';
 import type { FetchOptions, PageFetcher, PageResponse } from './types.ts';
 
 // The same browser-like headers the old pccomponentes script sent
-const USER_AGENT =
+export const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 const MAX_REDIRECTS = 5;
 const MAX_BODY_BYTES = 15 * 1024 * 1024;
@@ -46,6 +47,8 @@ export function createHttpFetcher(): PageFetcher {
       if (res.status >= 300 && res.status < 400 && location) {
         await res.body?.cancel();
         current = new URL(location, current).toString();
+        // A public shop page mustn't send the server to the local network
+        if (isPrivateHost(new URL(current).hostname)) throw new Error('The page redirected to a local or private network address');
         continue;
       }
       const length = Number(res.headers.get('content-length') ?? 0);

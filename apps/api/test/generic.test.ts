@@ -11,6 +11,7 @@ import { shopFixture } from './fixtures.ts';
 
 const FNAC_URL = 'https://www.fnac.pt/Google-Pixel-10-Pro-256GB-Obsidiana-Telemovel-SmartPhone-Android/a13213894';
 const RP_URL = 'https://www.radiopopular.pt/produto/smartphone-samsung-galaxy-a17-256gb-preto';
+const MF_URL = 'https://minisforumpc.eu/products/minisforum-m1-pro-125h-mini-pc';
 
 describe('parseShopPage', () => {
   it('reads JSON-LD product data (Fnac)', () => {
@@ -37,6 +38,17 @@ describe('parseShopPage', () => {
       canonicalUrl: RP_URL,
     });
     expect(page.offer).toMatchObject({ price: 259.99, currency: 'EUR' });
+  });
+
+  it("lists the versions a page sells, each with its own price (Minisforum's Shopify ProductGroup)", () => {
+    const page = parseShopPage(shopFixture('minisforum-versions'), MF_URL);
+    expect(page.title).toBe('MINISFORUM M1 Pro-125H');
+    expect(page.variants.map((v) => [v.label, v.offer.price, readAvailability(v.offer.availability).inStock])).toEqual([
+      ['Intel Core™ Ultra 5 Processor 125H / Barebone(Not include os license)', 379, true],
+      ['Intel Core™ Ultra 5 Processor 125H / 32GB RAM + 512GB SSD', 869, false],
+      ['Intel Core™ Ultra 5 Processor 125H / 32GB RAM + 1TB SSD', 949, true],
+    ]);
+    expect(page.variants[2]!.url).toBe(`${MF_URL}?variant=52215880319342`);
   });
 
   it('falls back to price meta tags', () => {
@@ -94,6 +106,41 @@ describe('genericAdapter.check', () => {
       serve(shopFixture('cloudflare-challenge'), 403, { 'cf-mitigated': 'challenge' }),
     );
     expect(out).toMatchObject({ status: 'blocked', error: 'The shop answered with a Cloudflare challenge instead of the page' });
+  });
+
+  describe('on a page that sells several versions', () => {
+    const minisforum = marketplace('minisforumpc.eu');
+    const run = (url: string, guardInclude: string[] = [], guardExclude: string[] = []) =>
+      genericAdapter.check({ marketplace: minisforum, externalId: pageRef(new URL(url)), url, guardInclude, guardExclude }, serve(shopFixture('minisforum-versions')));
+
+    it('tracks the version its terms pick out', async () => {
+      const out = await run(MF_URL, ['1TB']);
+      expect(out).toMatchObject({ status: 'ok', price: 949, inStock: true, variantLabel: 'Intel Core™ Ultra 5 Processor 125H / 32GB RAM + 1TB SSD', offers: [] });
+      expect(out.raw.variant).toBe(`${MF_URL}?variant=52215880319342`);
+      expect(out.raw.variants).toHaveLength(3);
+    });
+
+    it('tracks the version the link points at', async () => {
+      const out = await run(`${MF_URL}?variant=53465203507566&utm_source=x`);
+      expect(out).toMatchObject({ status: 'unavailable', price: 869, inStock: false, variantLabel: expect.stringContaining('512GB') });
+    });
+
+    it("tracks the page's default, the first in stock, without terms or a version in the link", async () => {
+      const out = await run(MF_URL);
+      expect(out).toMatchObject({ status: 'ok', price: 379, variantLabel: expect.stringContaining('Barebone') });
+    });
+
+    it('says which versions there are when the terms fit none or several', async () => {
+      const none = await run(MF_URL, ['2TB']);
+      expect(none.status).toBe('variant_mismatch');
+      expect(none.price).toBeNull();
+      expect(none.error).toBe(
+        "None of the page's 3 versions fits the version check terms. The page sells: Barebone(Not include os license) €379.00; 32GB RAM + 512GB SSD €869.00 (out of stock); 32GB RAM + 1TB SSD €949.00",
+      );
+      const several = await run(MF_URL, ['32GB'], ['barebone']);
+      expect(several.status).toBe('variant_mismatch');
+      expect(several.error).toMatch(/^2 of the page's versions fit the version check terms: 32GB RAM \+ 512GB SSD .*; 32GB RAM \+ 1TB SSD .*\. Add a term only one of them has\.$/);
+    });
   });
 
   it('returns an error when the page has no product data', async () => {

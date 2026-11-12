@@ -6,6 +6,7 @@ import type { CatalogService } from '../catalog.ts';
 import type { Db } from '../db/client.ts';
 import { listings, observations, products, storeState } from '../db/schema.ts';
 import { HttpError } from '../http/errors.ts';
+import type { StoreIcons } from '../stores/icons.ts';
 
 export async function rateGroupStatuses(db: Db, catalog: Catalog, now = new Date()): Promise<RateGroupStatus[]> {
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
@@ -54,8 +55,20 @@ export async function rateGroupStatuses(db: Db, catalog: Catalog, now = new Date
   });
 }
 
-export function storeRoutes(db: Db, catalog: CatalogService, wake: (group: string) => void): Router {
+export function storeRoutes(db: Db, catalog: CatalogService, wake: (group: string) => void, icons: StoreIcons): Router {
   const r = Router();
+
+  // Store icons: which stores have one (with a version for caching), and the image itself
+  r.get('/store-icons', async (_req, res) => {
+    res.json(await icons.versions());
+  });
+
+  r.get('/store-icons/:store', async (req, res) => {
+    const icon = await icons.get(String(req.params.store));
+    if (!icon) throw new HttpError(404, 'No icon for that store');
+    // Addressed with ?v=<version>, so it can be cached for long
+    res.set('cache-control', 'private, max-age=604800, immutable').type(icon.contentType).send(icon.data);
+  });
 
   r.get('/stores', async (_req, res) => {
     res.json(await rateGroupStatuses(db, catalog.get()));
