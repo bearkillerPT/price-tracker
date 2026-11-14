@@ -110,7 +110,12 @@ export function countryName(code: string, language = 'en'): string | null {
 
 export function parseAmazonPage(html: string, marketplace: MarketplaceInfo): AmazonPage {
   const $ = cheerio.load(html);
-  const text = (selector: string) => clean($(selector).first().text());
+  // Visible text only: blocks like #availability carry inline scripts
+  const text = (selector: string) => {
+    const el = $(selector).first().clone();
+    el.find('script, style').remove();
+    return clean(el.text());
+  };
 
   const isCaptcha =
     $('form[action*="validateCaptcha"]').length > 0 ||
@@ -219,6 +224,10 @@ export function parseAmazonPage(html: string, marketplace: MarketplaceInfo): Ama
   const outOfStock = $('#outOfStock').length > 0;
   page.inStock = canBuy && !outOfStock;
   page.availabilityText = text('#availability') ?? text('#outOfStock .a-color-price') ?? text('#outOfStock');
+  // No buy box: Amazon only lists other sellers' offers ("See All Buying Options")
+  if (!canBuy && !page.availabilityText && $('#buybox-see-all-buying-choices').length) {
+    page.availabilityText = 'No featured offer: only other sellers, under "See All Buying Options"';
+  }
 
   // The older seller line (Amazon Business): "Sold by <seller> and Fulfilled by Amazon.", after a popover that
   // isn't shown (a VAT invoice note)

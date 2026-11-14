@@ -108,6 +108,17 @@ describe('VAT', () => {
     expect(page).toMatchObject({ priceIncludesVat: false, price: 949, signedIn: true });
   });
 
+  it("reads a business page without a featured offer as unavailable, with readable text (Amazon Business Germany)", () => {
+    const page = parseAmazonPage(amazonFixture('business-de-no-featured-offer'), businessDe);
+    expect(page).toMatchObject({
+      kind: 'product',
+      signedIn: true,
+      price: null,
+      inStock: false,
+      availabilityText: 'No featured offer: only other sellers, under "See All Buying Options"',
+    });
+  });
+
   it('tracks the price without VAT when a business page labels both (Amazon Business Spain)', () => {
     // The buy box shows "€794.12 (945.00 incl. VAT)"; the add-to-cart form carries 945.0
     const page = parseAmazonPage(amazonFixture('business-es-vat-both'), marketplaceIn(BUILT_IN_CATALOG, 'business.amazon.es')!);
